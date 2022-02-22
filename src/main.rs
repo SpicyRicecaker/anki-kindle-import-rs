@@ -31,6 +31,7 @@ struct Term {
 }
 
 fn main() {
+    let date_inclusive_after = get_date_from_arg();
     let clippings_path = {
         let mut t = dirs::home_dir().unwrap();
         t.push(r"Calibre Library/Kindle/My Clippings (13)/My Clippings - Kindle.txt");
@@ -119,5 +120,36 @@ fn main() {
         };
         // next line is always (notesorhighlight | location | date)
     }
+    if let Some(date_inclusive_after) = date_inclusive_after {
+        entries = entries.into_iter().filter(|c| match c {
+            Clipping::Highlight {
+                date,
+                ..
+            } => {
+                date >= &date_inclusive_after
+            },
+            Clipping::Note {
+                date,
+                ..
+            } => {
+                date >= &date_inclusive_after
+            },
+        }).collect();
+    }
     fs::write("out.json", serde_json::to_string(&entries).unwrap()).unwrap();
+}
+
+fn get_date_from_arg() -> Option<DateTime<Utc>> {
+    let mut args = std::env::args();
+    args.next();
+    match args.next() {
+        Some(arg) => {
+            print!("Program started with arg {}", arg);
+            let naive_time = NaiveTime::from_hms(0, 0, 0);
+            let naive_date = NaiveDate::parse_from_str(&arg, "%m-%d-%Y").unwrap();
+            let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
+            Some(Local.from_local_datetime(&naive_date_time).unwrap().into())
+        }
+        None => None,
+    }
 }
