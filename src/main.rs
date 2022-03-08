@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs,
+    path::{self, Path},
+};
 
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
@@ -7,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use chrono::{TimeZone, Utc};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 enum Clipping {
     Highlight {
         book: String,
@@ -24,13 +27,14 @@ enum Clipping {
     },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Term {
     term: String,
     definition: String,
 }
 
 fn main() {
+    validate();
     let date_inclusive_after = get_date_from_arg();
     let clippings_path = {
         let mut t = dirs::home_dir().unwrap();
@@ -95,7 +99,7 @@ fn main() {
                         break;
                     }
                     terms.push(Term {
-                        term: line.to_string(),
+                        term: line.to_string().to_lowercase(),
                         definition: String::new(),
                     });
                 }
@@ -121,21 +125,24 @@ fn main() {
         // next line is always (notesorhighlight | location | date)
     }
     if let Some(date_inclusive_after) = date_inclusive_after {
-        entries = entries.into_iter().filter(|c| match c {
-            Clipping::Highlight {
-                date,
-                ..
-            } => {
-                date >= &date_inclusive_after
-            },
-            Clipping::Note {
-                date,
-                ..
-            } => {
-                date >= &date_inclusive_after
-            },
-        }).collect();
+        entries = entries
+            .into_iter()
+            .filter(|c| match c {
+                Clipping::Highlight { date, .. } => date >= &date_inclusive_after,
+                Clipping::Note { date, .. } => date >= &date_inclusive_after,
+            })
+            .collect();
     }
+
+    // check if file already exists
+    let out_path = Path::new("out.json");
+    if out_path.exists() {
+        // copy file to `out.json (old)`
+        let copy = Path::new("out-copy.json");
+        fs::copy(out_path, copy).unwrap();
+        println!("overwrote old `out.json` (backed up to `out-copy.json`)");
+    }
+    // copy to something
     fs::write("out.json", serde_json::to_string(&entries).unwrap()).unwrap();
 }
 
@@ -151,5 +158,36 @@ fn get_date_from_arg() -> Option<DateTime<Utc>> {
             Some(Local.from_local_datetime(&naive_date_time).unwrap().into())
         }
         None => None,
+    }
+}
+
+fn validate() {
+    let mut args = std::env::args();
+    args.next();
+    if let Some(arg) = args.next() {
+        // validate
+        if arg == "validate" {
+            // prase into json
+            let vec: Vec<Clipping> =
+                serde_json::from_str(&std::fs::read_to_string("out.json").unwrap()).unwrap();
+
+            vec.chunks(2).for_each(|arr| {
+                assert!(arr.len() == 2);
+
+                match arr[0] {
+                    Clipping::Highlight { .. } => {}
+                    Clipping::Note { .. } => {
+                        panic!("expected highlight, found note: {:#?}", arr[0])
+                    }
+                }
+                match arr[1] {
+                    Clipping::Highlight { .. } => {
+                        panic!("expected note, found highlight: {:#?}", arr[1])
+                    }
+                    Clipping::Note { .. } => {}
+                }
+            });
+        }
+        std::process::exit(0);
     }
 }
