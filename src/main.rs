@@ -5,6 +5,7 @@ use std::{
 
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
+use clap::{arg, Arg, Command};
 use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -72,24 +73,44 @@ fn main() -> Result<(), Error> {
     // set output file format
     let config = Config::new(OutputFileFormat::Yaml);
 
+    // create clap app
+    let matches = Command::new("anki-kindle-import")
+        .version("0.1.0")
+        .author("Andy Li <SpicyRicecaker@gmail.com>")
+        .about("Turns kindle clippings into structure easily parsible by Anki")
+        .arg(arg!(--validate "check the output file to make sure there is one highlight per one note"))
+        .arg(arg!(-s --start-date "only include clippings from the start date, inclusive"))
+        .arg(arg!(--clipping-path "the path to the kindle clippings"))
+        .get_matches();
 
     // check if we should validate, and continue on with the rest of the program
-    if should_validate() {
+    if matches.is_present("validate") {
+        info!("program started with validate flag, now validating...");
         validate(&config)?;
         info!("successfullly validated program");
     }
 
     // get optional argument if needed
-    let date_inclusive_after = get_date_from_arg();
+    let date_inclusive_after = if let Some(date_string) = matches.value_of("start-date") {
+        info!("program started with value of start date");
+        Some(date_from_str(date_string)?)
+    } else {
+        None
+    };
 
-    let clippings_path = {
+    // get clipping path & reading clipping
+    let clippings_path = if matches.is_present("clipping-path") {
+        PathBuf::from(matches.value_of("clipping-path").unwrap())
+    } else {
         let mut t = dirs::home_dir().unwrap();
         t.push(r"Calibre Library/Kindle/My Clippings (13)/My Clippings - Kindle.txt");
         t
     };
-    let mut entries = Vec::new();
     let clippings_txt =
         fs::read_to_string(clippings_path).with_context(|| "unable to read clippings path")?;
+
+    // store all entries
+    let mut entries = Vec::new();
 
     let re_author_book = Regex::new(r"(?P<book>.+) \((?P<author>.+)\)").unwrap();
     let re_date = Regex::new(
@@ -205,46 +226,11 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
-fn get_date_from_arg() -> Option<DateTime<Utc>> {
-    let mut args = std::env::args();
-    args.next();
-    match args.next() {
-        Some(arg) => {
-            info!("Program started with arg {}", arg);
-            let naive_time = NaiveTime::from_hms(0, 0, 0);
-            let naive_date = NaiveDate::parse_from_str(&arg, "%m-%d-%Y").unwrap();
-            let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
-            Some(Local.from_local_datetime(&naive_date_time).unwrap().into())
-        }
-        None => {
-            info!("Program started with no args");
-            None
-        }
-    }
-}
-
-// #[derive(Error, Debug)]
-// enum ParsingError {
-// #[error("Invalid header (expected {expected:?}, got {found:?})")]
-//     InvalidHeader {
-//         expected: String,
-//         found: String,
-//     },
-//     #[error("Missing attribute: {0}")]
-//     MissingAttribute(String),
-// }
-
-fn should_validate() -> bool {
-    // ignore the first arg, which is always the program path
-    let mut args = std::env::args();
-    args.next();
-
-    // if there is in fact a "validate" argument
-    if let Some(arg) = args.next() {
-        arg == "validate"
-    } else {
-        false
-    }
+fn date_from_str(date_str: &str) -> Result<DateTime<Utc>, Error> {
+    let naive_time = NaiveTime::from_hms(0, 0, 0);
+    let naive_date = NaiveDate::parse_from_str(date_str, "%m-%d-%Y")?;
+    let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
+    Ok(Local.from_local_datetime(&naive_date_time).unwrap().into())
 }
 
 /// Validates if notes have one highlight and one (or more) terms. This doesn't
