@@ -6,6 +6,7 @@ use std::{
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
 use clap::{arg, Arg, Command};
+use env_logger::Env;
 use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,7 @@ impl Config {
 
 fn main() -> Result<(), Error> {
     // initialize logger
-    env_logger::init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("trace")).init();
     info!("Program started");
 
     // set output file format
@@ -88,6 +89,7 @@ fn main() -> Result<(), Error> {
         info!("program started with validate flag, now validating...");
         validate(&config)?;
         info!("successfullly validated program");
+        std::process::exit(0);
     }
 
     // get optional argument if needed
