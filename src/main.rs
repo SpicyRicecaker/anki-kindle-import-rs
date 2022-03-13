@@ -5,9 +5,11 @@ use std::{
 
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
+use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use anyhow::{bail, Error};
 use chrono::{TimeZone, Utc};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +36,9 @@ struct Term {
 }
 
 fn main() {
+    // initialize logger
+    env_logger::init();
+    info!("Program started");
     validate();
     let date_inclusive_after = get_date_from_arg();
     let clippings_path = {
@@ -157,37 +162,66 @@ fn get_date_from_arg() -> Option<DateTime<Utc>> {
             let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
             Some(Local.from_local_datetime(&naive_date_time).unwrap().into())
         }
-        None => None,
+        None => {
+            println!("Program started with no args");
+            None
+        }
     }
 }
 
-fn validate() {
+// #[derive(Error, Debug)]
+// enum ParsingError {
+// #[error("Invalid header (expected {expected:?}, got {found:?})")]
+//     InvalidHeader {
+//         expected: String,
+//         found: String,
+//     },
+//     #[error("Missing attribute: {0}")]
+//     MissingAttribute(String),
+// }
+
+/// Validates if notes have one highlight and one (or more) terms. This doesn't
+/// work for cloze types, so it's kinda useless rn
+fn validate() -> Result<(), Error> {
+    // ignore the first arg, which is always the program path
     let mut args = std::env::args();
     args.next();
+
+    // if there is in fact a "validate" argument
     if let Some(arg) = args.next() {
-        // validate
         if arg == "validate" {
-            // prase into json
+            // parse the file in to JSON
             let vec: Vec<Clipping> =
                 serde_json::from_str(&std::fs::read_to_string("out.json").unwrap()).unwrap();
 
-            vec.chunks(2).for_each(|arr| {
-                assert!(arr.len() == 2);
+            // make sure that there is one highlight per one note (currently doesn't take into account cloze)
+            vec.chunks(2).enumerate().try_for_each(|(idx, arr)| {
+                if arr.len() != 2 {
+                    bail!(
+                        "unable to form pair {idx} since their lengths don't match {:#?} {:#?}",
+                        arr[0],
+                        arr[1]
+                    )
+                }
 
-                match arr[0] {
-                    Clipping::Highlight { .. } => {}
-                    Clipping::Note { .. } => {
-                        panic!("expected highlight, found note: {:#?}", arr[0])
-                    }
+                if let Clipping::Note { .. } = arr[0] {
+                    bail!(
+                        "expected highlight at pair {idx}, found note: {:#?}",
+                        arr[0]
+                    )
                 }
-                match arr[1] {
-                    Clipping::Highlight { .. } => {
-                        panic!("expected note, found highlight: {:#?}", arr[1])
-                    }
-                    Clipping::Note { .. } => {}
+                if let Clipping::Highlight { .. } = arr[1] {
+                    bail!(
+                        "expected note at pair {idx}, found highlight: {:#?}",
+                        arr[1]
+                    )
                 }
-            });
+                Ok(())
+            })
+        } else {
+            Ok(())
         }
-        std::process::exit(0);
+    } else {
+        Ok(())
     }
 }
