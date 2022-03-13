@@ -10,6 +10,7 @@ edition = "2021"
 dirs = "4.0.0"
 regex = "1.5.4"
 chrono = { version = "0.4.19", features = ["serde"] }
+clap = "3.1.6"
 
 # serialization / deserialization
 serde = { version = "1.0.136", features = ["derive"] }

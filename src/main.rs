@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{self, Path},
+    path::{Path, PathBuf},
 };
 
 use chrono::prelude::*;
@@ -9,7 +9,7 @@ use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use anyhow::{bail, Error, Context};
+use anyhow::{bail, Context, Error};
 use chrono::{TimeZone, Utc};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,13 +35,49 @@ struct Term {
     definition: String,
 }
 
-fn main() -> Result<(), Error>{
+enum OutputFileFormat {
+    Yaml,
+    Json,
+}
+
+impl OutputFileFormat {
+    pub fn get_extension(&self) -> &str {
+        match self {
+            OutputFileFormat::Yaml => "yml",
+            OutputFileFormat::Json => "json",
+        }
+    }
+}
+
+struct Config {
+    output_file_name: String,
+    output_file_format: OutputFileFormat,
+}
+
+impl Config {
+    pub fn new(output_file_format: OutputFileFormat) -> Config {
+        let output_file_name = format!("output.{}", output_file_format.get_extension());
+        Config {
+            output_file_name,
+            output_file_format,
+        }
+    }
+}
+
+fn main() -> Result<(), Error> {
     // initialize logger
     env_logger::init();
     info!("Program started");
 
+    // set output file format
+    let config = Config::new(OutputFileFormat::Yaml);
+
+
     // check if we should validate, and continue on with the rest of the program
-    validate()?;
+    if should_validate() {
+        validate(&config)?;
+        info!("successfullly validated program");
+    }
 
     // get optional argument if needed
     let date_inclusive_after = get_date_from_arg();
@@ -52,7 +88,8 @@ fn main() -> Result<(), Error>{
         t
     };
     let mut entries = Vec::new();
-    let clippings_txt = fs::read_to_string(clippings_path).with_context(|| "unable to read clippings path")?;
+    let clippings_txt =
+        fs::read_to_string(clippings_path).with_context(|| "unable to read clippings path")?;
 
     let re_author_book = Regex::new(r"(?P<book>.+) \((?P<author>.+)\)").unwrap();
     let re_date = Regex::new(
@@ -144,15 +181,27 @@ fn main() -> Result<(), Error>{
     }
 
     // check if file already exists
-    let out_path = Path::new("out.json");
+    let out_path = Path::new(&config.output_file_name);
     if out_path.exists() {
         // copy file to `out.json (old)`
-        let copy = Path::new("out-copy.json");
-        fs::copy(out_path, copy).with_context(||format!("unable to copy from {:#?} to {:#?} for some reason", out_path, copy))?;
-        println!("overwrote old `out.json` (backed up to `out-copy.json`)");
+        let copy = format!("output-copy.{}", config.output_file_format.get_extension());
+        fs::copy(out_path, &copy).with_context(|| {
+            format!(
+                "unable to copy from {:#?} to {:#?} for some reason",
+                out_path, copy
+            )
+        })?;
+        println!("overwrote old {:?} (backed up to `{:?}`)", out_path, copy);
     }
     // copy to something
-    fs::write("out.json", serde_json::to_string(&entries).unwrap()).with_context(||"Unable to write to final output file `out.json` for some reason.")?;
+    fs::write(
+        &config.output_file_name,
+        match config.output_file_format {
+            OutputFileFormat::Json => serde_json::to_string(&entries).unwrap(),
+            OutputFileFormat::Yaml => serde_yaml::to_string(&entries).unwrap(),
+        },
+    )
+    .with_context(|| "Unable to write to final output file `out.json` for some reason.")?;
     Ok(())
 }
 
@@ -185,48 +234,56 @@ fn get_date_from_arg() -> Option<DateTime<Utc>> {
 //     MissingAttribute(String),
 // }
 
-/// Validates if notes have one highlight and one (or more) terms. This doesn't
-/// work for cloze types, so it's kinda useless rn
-fn validate() -> Result<(), Error> {
+fn should_validate() -> bool {
     // ignore the first arg, which is always the program path
     let mut args = std::env::args();
     args.next();
 
     // if there is in fact a "validate" argument
     if let Some(arg) = args.next() {
-        if arg == "validate" {
-            // parse the file in to JSON
-            let vec: Vec<Clipping> =
-                serde_json::from_str(&std::fs::read_to_string("out.json").unwrap()).unwrap();
-
-            // make sure that there is one highlight per one note (currently doesn't take into account cloze)
-            vec.chunks(2).enumerate().try_for_each(|(idx, arr)| {
-                if arr.len() != 2 {
-                    bail!(
-                        "unable to form pair {idx} since their lengths don't match {:#?} {:#?}",
-                        arr[0],
-                        arr[1]
-                    )
-                }
-
-                if let Clipping::Note { .. } = arr[0] {
-                    bail!(
-                        "expected highlight at pair {idx}, found note: {:#?}",
-                        arr[0]
-                    )
-                }
-                if let Clipping::Highlight { .. } = arr[1] {
-                    bail!(
-                        "expected note at pair {idx}, found highlight: {:#?}",
-                        arr[1]
-                    )
-                }
-                Ok(())
-            })
-        } else {
-            Ok(())
-        }
+        arg == "validate"
     } else {
-        Ok(())
+        false
     }
+}
+
+/// Validates if notes have one highlight and one (or more) terms. This doesn't
+/// work for cloze types, so it's kinda useless rn
+fn validate(config: &Config) -> Result<(), Error> {
+    // parse the file in to JSON
+    let vec: Vec<Clipping> = match config.output_file_format {
+        OutputFileFormat::Yaml => {
+            serde_yaml::from_str(&std::fs::read_to_string(&config.output_file_name).unwrap())
+                .unwrap()
+        }
+        OutputFileFormat::Json => {
+            serde_json::from_str(&std::fs::read_to_string(&config.output_file_name).unwrap())
+                .unwrap()
+        }
+    };
+
+    // make sure that there is one highlight per one note (currently doesn't take into account cloze)
+    vec.chunks(2).enumerate().try_for_each(|(idx, arr)| {
+        if arr.len() != 2 {
+            bail!(
+                "unable to form pair {idx} since their lengths don't match {:#?} {:#?}",
+                arr[0],
+                arr[1]
+            )
+        }
+
+        if let Clipping::Note { .. } = arr[0] {
+            bail!(
+                "expected highlight at pair {idx}, found note: {:#?}",
+                arr[0]
+            )
+        }
+        if let Clipping::Highlight { .. } = arr[1] {
+            bail!(
+                "expected note at pair {idx}, found highlight: {:#?}",
+                arr[1]
+            )
+        }
+        Ok(())
+    })
 }

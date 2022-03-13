@@ -1,5 +1,5 @@
 /target
-/out.json
-/out-copy.json
+/output.*
+/output-copy.*
 
 .DS_Store
