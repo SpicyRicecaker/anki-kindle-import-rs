@@ -9,7 +9,7 @@ use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use anyhow::{bail, Error};
+use anyhow::{bail, Error, Context};
 use chrono::{TimeZone, Utc};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,26 +35,30 @@ struct Term {
     definition: String,
 }
 
-fn main() {
+fn main() -> Result<(), Error>{
     // initialize logger
     env_logger::init();
     info!("Program started");
-    validate();
+
+    // check if we should validate, and continue on with the rest of the program
+    validate()?;
+
+    // get optional argument if needed
     let date_inclusive_after = get_date_from_arg();
+
     let clippings_path = {
         let mut t = dirs::home_dir().unwrap();
         t.push(r"Calibre Library/Kindle/My Clippings (13)/My Clippings - Kindle.txt");
         t
     };
     let mut entries = Vec::new();
-    let clippings_txt = fs::read_to_string(clippings_path).unwrap();
+    let clippings_txt = fs::read_to_string(clippings_path).with_context(|| "unable to read clippings path")?;
 
     let re_author_book = Regex::new(r"(?P<book>.+) \((?P<author>.+)\)").unwrap();
     let re_date = Regex::new(
         // r"- Your (?P<highlight_or_note>.+) on page \d+ \| .+ \| Added on .+, (?P<date>.+,.+)",
         r"- Your (?P<highlight_or_note>.+) on .+ (\| .+ )?\| Added on .+, (?P<date>.+,.+)",
-    )
-    .unwrap();
+    )?;
 
     let mut iter = clippings_txt.lines();
     while let Some(line_1) = iter.next() {
@@ -144,11 +148,12 @@ fn main() {
     if out_path.exists() {
         // copy file to `out.json (old)`
         let copy = Path::new("out-copy.json");
-        fs::copy(out_path, copy).unwrap();
+        fs::copy(out_path, copy).with_context(||format!("unable to copy from {:#?} to {:#?} for some reason", out_path, copy))?;
         println!("overwrote old `out.json` (backed up to `out-copy.json`)");
     }
     // copy to something
-    fs::write("out.json", serde_json::to_string(&entries).unwrap()).unwrap();
+    fs::write("out.json", serde_json::to_string(&entries).unwrap()).with_context(||"Unable to write to final output file `out.json` for some reason.")?;
+    Ok(())
 }
 
 fn get_date_from_arg() -> Option<DateTime<Utc>> {
@@ -156,14 +161,14 @@ fn get_date_from_arg() -> Option<DateTime<Utc>> {
     args.next();
     match args.next() {
         Some(arg) => {
-            print!("Program started with arg {}", arg);
+            info!("Program started with arg {}", arg);
             let naive_time = NaiveTime::from_hms(0, 0, 0);
             let naive_date = NaiveDate::parse_from_str(&arg, "%m-%d-%Y").unwrap();
             let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
             Some(Local.from_local_datetime(&naive_date_time).unwrap().into())
         }
         None => {
-            println!("Program started with no args");
+            info!("Program started with no args");
             None
         }
     }
