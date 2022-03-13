@@ -79,7 +79,7 @@ fn main() -> Result<(), Error> {
         .version("0.1.0")
         .author("Andy Li <SpicyRicecaker@gmail.com>")
         .about("Turns kindle clippings into structure easily parsible by Anki")
-        .arg(arg!(--validate "check the output file to make sure there is one highlight per one note"))
+        .arg(arg!(--validate "check the output file to make sure there is one highlight per one note, then compiles it"))
         .arg(arg!(-s --start-date "only include clippings from the start date, inclusive"))
         .arg(arg!(--clipping-path "the path to the kindle clippings"))
         .get_matches();
@@ -91,6 +91,7 @@ fn main() -> Result<(), Error> {
         info!("successfullly validated program");
         std::process::exit(0);
     }
+
 
     // get optional argument if needed
     let date_inclusive_after = if let Some(date_string) = matches.value_of("start-date") {
@@ -224,7 +225,7 @@ fn main() -> Result<(), Error> {
             OutputFileFormat::Yaml => serde_yaml::to_string(&entries).unwrap(),
         },
     )
-    .with_context(|| "Unable to write to final output file `out.json` for some reason.")?;
+    .with_context(|| "Unable to write to final output file `out.json/yml` for some reason.")?;
     Ok(())
 }
 
@@ -273,5 +274,15 @@ fn validate(config: &Config) -> Result<(), Error> {
             )
         }
         Ok(())
-    })
+    })?;
+
+    // attempt to compile the file
+    
+    fs::write(
+        "output.json",
+            serde_json::to_string(&vec).unwrap(),
+    )
+    .with_context(|| "Unable to write to final output file `out.json` for some reason.")?;
+
+    Ok(())
 }
