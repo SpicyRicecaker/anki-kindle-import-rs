@@ -1,3 +1,9 @@
+//! Any highlight is treated as an [Clipping::Highlight]
+//! Any note is treated as a [Clipping::Note], with [Clipping::Note::terms] counted per newline
+//! Except:
+//! - ` .. ` can be added after a term per line, which makes content after the ` ..` functions as "extra" content (thoughts, ideas, etc.). Additional newlines can be added via addtional ` .. `
+//! - ` ...` can be added after term to designate the word type as cloze. After which, any content after the ` ... ` functions as "extra" content. Please note that there can only be one cloze term per sentence as of now.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -5,7 +11,7 @@ use std::{
 
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
-use clap::{arg, Arg, Command};
+use clap::{arg, Command};
 use env_logger::Env;
 use log::info;
 use regex::Regex;
