@@ -1,12 +1,13 @@
 //! Any highlight is treated as an [Clipping::Highlight]
 //! Any note is treated as a [Clipping::Note], with [Clipping::Note::terms] counted per newline
 //! Except:
-//! - ` .. ` can be added after a term per line, which makes content after the ` ..` functions as "extra" content (thoughts, ideas, etc.). Additional newlines can be added via addtional ` .. `
+//! - ` .. ` can be added after a term per line, which makes content after the ` ..` functions as "extra" content (thoughts, ideas, etc.)
 //! - ` ...` can be added after term to designate the word type as cloze. After which, any content after the ` ... ` functions as "extra" content. Please note that there can only be one cloze term per sentence as of now.
 
 use std::{
     fs,
     path::{Path, PathBuf},
+    cmp::Ordering
 };
 
 use chrono::prelude::*;
@@ -32,15 +33,16 @@ enum Clipping {
     Note {
         book: String,
         author: String,
+        #[serde(with = "ts_seconds")]
         date: DateTime<Utc>,
-        terms: Vec<Term>,
+        cards: Vec<Card>,
     },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct Term {
-    term: String,
-    definition: String,
+enum Card {
+    Cloze { front: String, back: String },
+    Basic { front: String, back: String },
 }
 
 enum OutputFileFormat {
@@ -97,7 +99,6 @@ fn main() -> Result<(), Error> {
         info!("successfullly validated program");
         std::process::exit(0);
     }
-
 
     // get optional argument if needed
     let date_inclusive_after = if let Some(date_string) = matches.value_of("start-date") {
@@ -174,16 +175,57 @@ fn main() -> Result<(), Error> {
                     if line.contains("==========") {
                         break;
                     }
-                    terms.push(Term {
-                        term: line.to_string().to_lowercase(),
-                        definition: String::new(),
-                    });
+                    // at this point we can either split by ` ... ` or ` .. `.
+                    // if it's cloze
+                    if line.contains(" ... ") {
+                        let mut split = line.split(" ... ");
+                        // the term in question will be the first split
+                        let term = split.next().context("unable to find first term in cloze")?;
+
+                        // attempt to find the term in the previous term, which should be a highlight
+                        let clozed_content = if let Clipping::Highlight { sentence, .. } =
+                            entries.last().context("no previous highlight for cloze")?
+                        {
+                            // cloze every match of the term
+                            sentence.replace(term, &format!("{{c1::{term}}}"))
+                        } else {
+                            return Err(Error::msg("Term before cloze entry was not a higlight"));
+                        };
+
+                        terms.push(Card::Cloze {
+                            front: clozed_content,
+                            back: if let Some(extra) = split.next() {
+                                extra.to_string()
+                            } else {
+                                String::new()
+                            },
+                        });
+                    } else if line.contains(" .. ") {
+
+                        let back: Vec<String> = line.split(" .. ").map(|s|s.to_string()).collect();
+
+                        match back.len().cmp(&2) {
+                            Ordering::Less => return Err(Error::msg("no description provided for basic term when using `..` operator")),
+                            Ordering::Equal | Ordering::Greater => {},
+                        }
+
+                        terms.push(Card::Basic {
+                            front: String::new(),
+                            back: back.join("<br><br>"),
+                        });
+
+                    } else {
+                        terms.push(Card::Basic {
+                            front: String::new(),
+                            back: line.to_string().to_lowercase(),
+                        });
+                    }
                 }
                 entries.push(Clipping::Note {
                     book,
                     author,
                     date,
-                    terms,
+                    cards: terms,
                 });
             }
             "Bookmark" => {
@@ -283,12 +325,9 @@ fn validate(config: &Config) -> Result<(), Error> {
     })?;
 
     // attempt to compile the file
-    
-    fs::write(
-        "output.json",
-            serde_json::to_string(&vec).unwrap(),
-    )
-    .with_context(|| "Unable to write to final output file `out.json` for some reason.")?;
+
+    fs::write("output.json", serde_json::to_string(&vec).unwrap())
+        .with_context(|| "Unable to write to final output file `out.json` for some reason.")?;
 
     Ok(())
 }
