@@ -5,9 +5,9 @@
 //! - ` ...` can be added after term to designate the word type as cloze. After which, any content after the ` ... ` functions as "extra" content. Please note that there can only be one cloze term per sentence as of now.
 
 use std::{
+    cmp::Ordering,
     fs,
     path::{Path, PathBuf},
-    cmp::Ordering
 };
 
 use chrono::prelude::*;
@@ -48,6 +48,7 @@ enum Card {
 enum OutputFileFormat {
     Yaml,
     Json,
+    Markdown,
 }
 
 impl OutputFileFormat {
@@ -55,6 +56,7 @@ impl OutputFileFormat {
         match self {
             OutputFileFormat::Yaml => "yml",
             OutputFileFormat::Json => "json",
+            OutputFileFormat::Markdown => "md",
         }
     }
 }
@@ -80,7 +82,7 @@ fn main() -> Result<(), Error> {
     info!("Program started");
 
     // set output file format
-    let config = Config::new(OutputFileFormat::Yaml);
+    let config = Config::new(OutputFileFormat::Markdown);
 
     // create clap app
     let matches = Command::new("anki-kindle-import")
@@ -201,19 +203,19 @@ fn main() -> Result<(), Error> {
                             },
                         });
                     } else if line.contains(" .. ") {
-
-                        let back: Vec<String> = line.split(" .. ").map(|s|s.to_string()).collect();
+                        let back: Vec<String> = line.split(" .. ").map(|s| s.to_string()).collect();
 
                         match back.len().cmp(&2) {
-                            Ordering::Less => return Err(Error::msg("no description provided for basic term when using `..` operator")),
-                            Ordering::Equal | Ordering::Greater => {},
+                            Ordering::Less => return Err(Error::msg(
+                                "no description provided for basic term when using `..` operator",
+                            )),
+                            Ordering::Equal | Ordering::Greater => {}
                         }
 
                         terms.push(Card::Basic {
                             front: String::new(),
-                            back: back.join("<br><br>"),
+                            back: back.join("\n"),
                         });
-
                     } else {
                         terms.push(Card::Basic {
                             front: String::new(),
@@ -271,9 +273,42 @@ fn main() -> Result<(), Error> {
         match config.output_file_format {
             OutputFileFormat::Json => serde_json::to_string(&entries).unwrap(),
             OutputFileFormat::Yaml => serde_yaml::to_string(&entries).unwrap(),
+            OutputFileFormat::Markdown => {
+                // experimental markdown export
+                let mut out_string = String::new();
+
+                // separate entries into
+                for entry in entries {
+                    match entry {
+                        // if it's a highlight, don't even add a bullet, just insert the sentence
+                        Clipping::Highlight { sentence, .. } => {
+                            out_string.push_str(&format!("========\n{sentence}\n========\n"));
+                        }
+                        // otherwise, for notes,
+                        Clipping::Note { cards, .. } => {
+                            for card in cards {
+                                match card {
+                                    Card::Cloze { front, back } => {
+                                        out_string.push_str(&format!(
+                                            "----\n{front}\n|-\n{back}\n----\n"
+                                        ));
+                                    }
+                                    Card::Basic { front, back } => {
+                                        out_string.push_str(&format!(
+                                            "----\n{front}\n|-\n{back}\n----\n"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                out_string
+            }
         },
     )
     .with_context(|| "Unable to write to final output file `out.json/yml` for some reason.")?;
+
     Ok(())
 }
 
@@ -290,12 +325,82 @@ fn validate(config: &Config) -> Result<(), Error> {
     // parse the file in to JSON
     let vec: Vec<Clipping> = match config.output_file_format {
         OutputFileFormat::Yaml => {
-            serde_yaml::from_str(&std::fs::read_to_string(&config.output_file_name).unwrap())
-                .unwrap()
+            serde_yaml::from_str(&fs::read_to_string(&config.output_file_name).unwrap()).unwrap()
         }
         OutputFileFormat::Json => {
-            serde_json::from_str(&std::fs::read_to_string(&config.output_file_name).unwrap())
-                .unwrap()
+            serde_json::from_str(&fs::read_to_string(&config.output_file_name).unwrap()).unwrap()
+        }
+        OutputFileFormat::Markdown => {
+            // construct array of cards
+            let mut cards: Vec<Card> = Vec::new();
+            let string = fs::read_to_string(&config.output_file_name).unwrap();
+
+            let mut lines = string.lines();
+
+            let mut sentence = String::new();
+            // get next line
+            while let Some(line) = lines.next() {
+                match line {
+                    // match the line to either "========" to signal a sentence, or
+                    "========" => {
+                        sentence.clear();
+                        let mut buffer: Vec<&str> = Vec::new();
+                        // consume until next "========"
+                        for line in lines.by_ref() {
+                            if line != "========" {
+                                buffer.push(line);
+                            } else {
+                                break;
+                            }
+                        }
+                        sentence = buffer.join("\n");
+                    }
+                    // "----" to signal a card built off that sentence
+                    "----" => {
+                        let mut buffer: Vec<&str> = Vec::new();
+                        // consume until next "========"
+                        for line in lines.by_ref() {
+                            if line != "----" {
+                                buffer.push(line);
+                            } else {
+                                break;
+                            }
+                        }
+                        let total_content = buffer.join("\n");
+                        let mut split = total_content.split("|-");
+                        let front = split
+                            .next()
+                            .context("error splitting front")?
+                            .to_string()
+                            .trim()
+                            .to_string();
+
+                        let back = split
+                            .next()
+                            .context("error splitting back")?
+                            .to_string()
+                            .trim()
+                            .to_string();
+                        // first check for the presence of any cloze beginnings
+                        if total_content.contains("{{c1::") {
+                            // insert it as a cloze, without the sentence
+                            cards.push(Card::Cloze { front, back });
+                        } else {
+                            cards.push(Card::Basic {
+                                front,
+                                back: format!("{}<br><br>{}", back, sentence),
+                            });
+                        }
+                    }
+                    _ => bail!("invalid card sequence detected"),
+                }
+            }
+
+            fs::write("output.json", serde_json::to_string(&cards).unwrap()).with_context(|| {
+                "Unable to write to final output file from cards .md to `out.json` for some reason."
+            })?;
+
+            std::process::exit(0);
         }
     };
 
