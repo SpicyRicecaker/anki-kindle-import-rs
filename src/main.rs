@@ -12,7 +12,7 @@ use std::{
 
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
-use clap::{arg, Command};
+use clap::{arg, Arg, Command};
 use env_logger::Env;
 use log::info;
 use regex::Regex;
@@ -89,9 +89,17 @@ fn main() -> Result<(), Error> {
         .version("0.1.0")
         .author("Andy Li <SpicyRicecaker@gmail.com>")
         .about("Turns kindle clippings into structure easily parsible by Anki")
-        .arg(arg!(--validate "check the output file to make sure there is one highlight per one note, then compiles it"))
-        .arg(arg!(-s --start-date "only include clippings from the start date, inclusive"))
-        .arg(arg!(--clipping-path "the path to the kindle clippings"))
+        .arg(arg!(-v --validate "check the output file to make sure there is one highlight per one note, then compiles it"))
+        .arg(Arg::new("start-date")
+                .short('d')
+                .long("start-date")
+                .takes_value(true)
+                .help("only include clippings from the start date, inclusive"))
+        .arg(Arg::new("clipping-path")
+                .short('p')
+                .long("clipping-path")
+                .takes_value(true)
+                .help("the path to kindle clippings. By default points to where Calibre exports clippings. (check README.md)"))
         .get_matches();
 
     // check if we should validate, and continue on with the rest of the program
