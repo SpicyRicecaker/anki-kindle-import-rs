@@ -389,25 +389,28 @@ fn validate(config: &Config) -> Result<(), Error> {
                             .to_string()
                             .trim()
                             .to_string();
-                        // separate the first line of back (the word) from the rest of the content
-                        let mut lines = back.lines();
-                        let term = lines.next().context("no term provided")?.trim();
-                        let rest: String = lines.collect::<String>().trim().to_string();
 
                         // first check for the presence of any cloze beginnings
                         if total_content.contains("{{c1::") {
                             // insert it as a cloze, without the sentence
                             cards.push(Card::Cloze { front, back });
-                        } else if rest.is_empty() {
-                            cards.push(Card::Basic {
-                                front,
-                                back: format!("{}<br><br>{}", term, sentence),
-                            });
                         } else {
-                            cards.push(Card::Basic {
-                                front,
-                                back: format!("{}<br><br>{}<br><br>{}", term, sentence, rest),
-                            });
+                            // separate the first line of back (the word) from the rest of the content
+                            let mut lines = back.lines();
+                            let term = lines.next().context("no term provided")?.trim();
+                            let rest: String = lines.collect::<String>().trim().to_string();
+
+                            if rest.is_empty() {
+                                cards.push(Card::Basic {
+                                    front,
+                                    back: format!("{}<br><br>{}", term, sentence),
+                                });
+                            } else {
+                                cards.push(Card::Basic {
+                                    front,
+                                    back: format!("{}<br><br>{}<br><br>{}", term, sentence, rest),
+                                });
+                            }
                         }
                     }
                     _ => bail!("invalid card sequence detected"),
