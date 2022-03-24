@@ -113,8 +113,12 @@ pub fn parse_from_anki(
                             entries.last().context("no previous highlight for cloze")?
                         {
                             trace!("replacing `{}` in `{}`", term, sentence);
-                            // cloze every match of the term
-                            sentence.replace(term, &format!("{{c1::{term}}}"))
+                            let re_term = Regex::new(&format!("(?i)(?P<term>{term})"))?;
+                            if re_term.is_match(sentence) {
+                                re_term.replace_all(sentence, "{{c1::$term}}").to_string()
+                            } else {
+                                panic!("no match for {term} in sentence {sentence}")
+                            }
                         } else {
                             return Err(Error::msg("Term before cloze entry was not a higlight"));
                         };
