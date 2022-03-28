@@ -1,5 +1,4 @@
 /target
-/output.*
-/output-copy.*
+/out
 
 .DS_Store

@@ -38,21 +38,32 @@ pub enum Card {
     Basic { front: String, back: String },
 }
 
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct Output {
+    cards: Vec<Card>,
+    #[serde(with = "ts_seconds")]
+    begin_date: DateTime<Utc>,
+    #[serde(with = "ts_seconds")]
+    end_date: DateTime<Utc>,
+}
+
+
 pub fn parse_from_anki(
     clippings_txt: String,
-    date_inclusive_after: Option<DateTime<Utc>>,
+    date_after: Option<DateTime<Utc>>,
 ) -> Result<Vec<Clipping>, Error> {
     // store all entries
     let mut entries = Vec::new();
 
     let re_author_book = Regex::new(r"(?P<book>.+) \((?P<author>.+)\)").unwrap();
     let re_date = Regex::new(
-        // r"- Your (?P<highlight_or_note>.+) on page \d+ \| .+ \| Added on .+, (?P<date>.+,.+)",
         r"- Your (?P<highlight_or_note>.+) on .+ (\| .+ )?\| Added on .+, (?P<date>.+,.+)",
     )?;
 
     let mut iter = clippings_txt.lines();
     while let Some(line_1) = iter.next() {
+        // trace!("{}", line_1);
         // first line is always the book and author
         let (book, author) = {
             let captures = re_author_book.captures(line_1).unwrap();
@@ -69,6 +80,18 @@ pub fn parse_from_anki(
         // e.g. November 24, 2018 11:31:30 AM
         let naive = NaiveDateTime::parse_from_str(&date, "%B %d, %Y %-I:%M:%S %p").unwrap();
         let date: DateTime<Utc> = Local.from_local_datetime(&naive).unwrap().into();
+
+        if let Some(date_after) = date_after {
+            if date <= date_after {
+                // skip until next ====
+                for line in iter.by_ref() {
+                    if line.contains("==========") {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
 
         // always two newlines
         iter.next().unwrap();
@@ -173,15 +196,16 @@ pub fn parse_from_anki(
         };
         // next line is always (notesorhighlight | location | date)
     }
-    if let Some(date_inclusive_after) = date_inclusive_after {
-        entries = entries
-            .into_iter()
-            .filter(|c| match c {
-                Clipping::Highlight { date, .. } => date >= &date_inclusive_after,
-                Clipping::Note { date, .. } => date >= &date_inclusive_after,
-            })
-            .collect();
-    }
+    // if let Some(date_inclusive_after) = date_inclusive_after {
+    //     entries = entries
+    //         .into_iter()
+    //         .filter(|c| match c {
+    //             Clipping::Highlight { date, .. } => date >= &date_inclusive_after,
+    //             Clipping::Note { date, .. } => date >= &date_inclusive_after,
+    //         })
+    //         .collect();
+    // }
+
     Ok(entries)
 }
 
@@ -190,25 +214,25 @@ pub fn run(config: Config) -> Result<(), Error> {
         Config::Regular {
             clippings_path,
             output_file_name,
-            date_inclusive_after,
+            date_after,
         } => {
             let clippings_txt = fs::read_to_string(clippings_path)
                 .with_context(|| "unable to read clippings path")?;
 
-            let entries = parse_from_anki(clippings_txt, date_inclusive_after)?;
+            let entries = parse_from_anki(clippings_txt, date_after)?;
 
             let out = {
                 // experimental markdown export
                 let mut out_string = String::new();
 
                 // separate entries into
-                for entry in entries {
+                for entry in &entries {
                     match entry {
                         // if it's a highlight, don't even add a bullet, just insert the sentence
                         Clipping::Highlight { sentence, .. } => {
                             out_string.push_str(&format!("========\n{sentence}\n========\n"));
                         }
-                        // otherwise, for notes,
+                        // otherwise, for nojes,
                         Clipping::Note { cards, .. } => {
                             for card in cards {
                                 match card {
@@ -231,6 +255,11 @@ pub fn run(config: Config) -> Result<(), Error> {
             };
 
             write(out, output_file_name)?;
+
+            write(
+                serde_json::to_string(&entries)?,
+                "out/output-metadata.json".to_string(),
+            )?;
         }
         Config::Validate { output_file_name } => {
             validate(output_file_name)?;
@@ -245,7 +274,7 @@ pub fn write(out: String, output_file_name: String) -> Result<(), Error> {
     let out_path = Path::new(&output_file_name);
     if out_path.exists() {
         // copy file to `out.json (old)`
-        let copy = "output-copy.md";
+        let copy = "out/output-copy.md";
         fs::copy(out_path, &copy).with_context(|| {
             format!(
                 "unable to copy from {:#?} to {:#?} for some reason",
@@ -343,7 +372,29 @@ fn validate(output_file_name: String) -> Result<(), Error> {
         }
     }
 
-    fs::write("output.json", serde_json::to_string(&cards).unwrap()).with_context(|| {
+    let metadata: Vec<Clipping> = serde_json::from_str(&fs::read_to_string("out/output-metadata.json")?)?;
+
+    let output = Output {
+        cards,
+        begin_date: match metadata.first().context("no first element in output-metadata.json")? {
+            Clipping::Highlight { date, ..} => {
+                *date
+            },
+            Clipping::Note {date, ..} => {
+                *date
+            },
+        },
+        end_date: match metadata.last().context("no last element in output-metadata.json")? {
+            Clipping::Highlight { date, ..} => {
+                *date
+            },
+            Clipping::Note {date, ..} => {
+                *date
+            },
+        },
+    };
+
+    fs::write("out/output.json", serde_json::to_string(&output).unwrap()).with_context(|| {
         "Unable to write to final output file from cards .md to `out.json` for some reason."
     })?;
 

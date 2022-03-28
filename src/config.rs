@@ -1,24 +1,34 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use anyhow::Error;
 use chrono::prelude::*;
+use chrono::serde::ts_seconds;
 use clap::{arg, Arg, Command};
 use log::info;
+use serde::{Deserialize, Serialize};
 
 pub enum Config {
     Regular {
         clippings_path: PathBuf,
         output_file_name: String,
-        date_inclusive_after: Option<DateTime<Utc>>,
+        date_after: Option<DateTime<Utc>>,
     },
     Validate {
         output_file_name: String,
     },
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LastDate {
+    #[serde(with = "ts_seconds")]
+    date: DateTime<Utc>,
+}
+
 impl Config {
     pub fn new() -> Result<Config, Error> {
-        let output_file_name = String::from("output.md");
+        let output_file_name = String::from("out/output.md");
+        // ensure dir
+        std::fs::create_dir_all("out")?;
 
         // create clap app
         let matches = Command::new("anki-kindle-import")
@@ -43,9 +53,13 @@ impl Config {
             Ok(Config::Validate { output_file_name })
         } else {
             // get optional argument if needed
-            let date_inclusive_after = if let Some(date_string) = matches.value_of("start-date") {
-                info!("program started with value of start date");
+            let date_after = if let Some(date_string) = matches.value_of("start-date") {
                 Some(date_from_str(date_string)?)
+            // last-date.json is written by Anki, after last feed
+            // we probably need testing for this, because this is getting too complex
+            } else if let Ok(file) = fs::read_to_string("out/last-date.json") {
+                let last_date: LastDate = serde_json::from_str(&file)?;
+                Some(last_date.date)
             } else {
                 None
             };
@@ -62,7 +76,7 @@ impl Config {
             Ok(Config::Regular {
                 output_file_name,
                 clippings_path,
-                date_inclusive_after,
+                date_after,
             })
         }
     }
@@ -72,5 +86,6 @@ fn date_from_str(date_str: &str) -> Result<DateTime<Utc>, Error> {
     let naive_time = NaiveTime::from_hms(0, 0, 0);
     let naive_date = NaiveDate::parse_from_str(date_str, "%m-%d-%Y")?;
     let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
+    info!("using clippings past start date: {}", naive_date_time);
     Ok(Local.from_local_datetime(&naive_date_time).unwrap().into())
 }
