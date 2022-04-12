@@ -333,14 +333,14 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                 let mut split = total_content.split("|-");
                 let front = split
                     .next()
-                    .context("error splitting front")?
+                    .context(format!("The content in the card does not have a `front` side! Card with content `{}`", total_content))?
                     .to_string()
                     .trim()
                     .to_string();
 
                 let back = split
                     .next()
-                    .context("error splitting back")?
+                    .context(format!("The content in the card does not have a `back` side! Card with content `{}`", total_content))?
                     .to_string()
                     .trim()
                     .to_string();
