@@ -38,7 +38,6 @@ pub enum Card {
     Basic { front: String, back: String },
 }
 
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Output {
     cards: Vec<Card>,
@@ -47,7 +46,6 @@ struct Output {
     #[serde(with = "ts_seconds")]
     end_date: DateTime<Utc>,
 }
-
 
 pub fn parse_from_anki(
     clippings_txt: String,
@@ -298,18 +296,18 @@ fn validate(output_file_name: String) -> Result<(), Error> {
     let mut cards: Vec<Card> = Vec::new();
     let string = fs::read_to_string(&output_file_name).unwrap();
 
-    let mut lines = string.lines();
+    let mut lines = string.lines().enumerate();
 
     let mut sentence = String::new();
     // get next line
-    while let Some(line) = lines.next() {
+    while let Some((number, line)) = lines.next() {
         match line {
             // match the line to either "========" to signal a sentence, or
             "========" => {
                 sentence.clear();
                 let mut buffer: Vec<&str> = Vec::new();
                 // consume until next "========"
-                for line in lines.by_ref() {
+                for (_, line) in lines.by_ref() {
                     if line != "========" {
                         buffer.push(line);
                     } else {
@@ -322,7 +320,7 @@ fn validate(output_file_name: String) -> Result<(), Error> {
             "----" => {
                 let mut buffer: Vec<&str> = Vec::new();
                 // consume until next "========"
-                for line in lines.by_ref() {
+                for (_, line) in lines.by_ref() {
                     if line != "----" {
                         buffer.push(line);
                     } else {
@@ -368,29 +366,30 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                     }
                 }
             }
-            _ => bail!("invalid card sequence detected"),
+            _ => {
+                bail!("invalid card sequence detected `{}` at line number {}", line, number)
+            },
         }
     }
 
-    let metadata: Vec<Clipping> = serde_json::from_str(&fs::read_to_string("out/output-metadata.json")?)?;
+    let metadata: Vec<Clipping> =
+        serde_json::from_str(&fs::read_to_string("out/output-metadata.json")?)?;
 
     let output = Output {
         cards,
-        begin_date: match metadata.first().context("no first element in output-metadata.json")? {
-            Clipping::Highlight { date, ..} => {
-                *date
-            },
-            Clipping::Note {date, ..} => {
-                *date
-            },
+        begin_date: match metadata
+            .first()
+            .context("no first element in output-metadata.json")?
+        {
+            Clipping::Highlight { date, .. } => *date,
+            Clipping::Note { date, .. } => *date,
         },
-        end_date: match metadata.last().context("no last element in output-metadata.json")? {
-            Clipping::Highlight { date, ..} => {
-                *date
-            },
-            Clipping::Note {date, ..} => {
-                *date
-            },
+        end_date: match metadata
+            .last()
+            .context("no last element in output-metadata.json")?
+        {
+            Clipping::Highlight { date, .. } => *date,
+            Clipping::Note { date, .. } => *date,
         },
     };
 
