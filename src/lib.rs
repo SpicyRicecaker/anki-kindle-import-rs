@@ -141,13 +141,18 @@ pub fn parse_from_anki(
                                 panic!("no match for {term} in sentence {sentence}")
                             }
                         } else {
-                            return Err(Error::msg("Term before cloze entry was not a higlight"));
+                            return Err(Error::msg("Term before cloze entry was not a highlight"));
                         };
 
                         terms.push(Card::Cloze {
-                            front: clozed_content,
+                            // TODO we add two newlines to cloze content because
+                            // we also want to be able to manually add word definitions to
+                            // the front
+                            front: format!("\n\n{clozed_content}"),
                             back: if let Some(extra) = split.next() {
-                                extra.trim().to_string()
+                                // TODO we add two newlines to back because the
+                                // reading will be on the back.
+                                format!("\n\n{}", extra.trim())
                             } else {
                                 String::new()
                             },
@@ -273,7 +278,7 @@ pub fn write(out: String, output_file_name: String) -> Result<(), Error> {
     if out_path.exists() {
         // copy file to `out.json (old)`
         let copy = "out/output-copy.md";
-        fs::copy(out_path, &copy).with_context(|| {
+        fs::copy(out_path, copy).with_context(|| {
             format!(
                 "unable to copy from {:#?} to {:#?} for some reason",
                 out_path, copy
@@ -350,7 +355,10 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                 } else {
                     // separate the first line of back (the word) from the rest of the content
                     let mut lines = back.lines();
-                    let term = lines.next().context("no term provided")?.trim();
+                    let term = lines
+                        .next()
+                        .with_context(|| format!("no term provided for {}", string))?
+                        .trim();
                     let rest: String = lines.collect::<String>().trim().to_string();
 
                     if rest.is_empty() {
@@ -367,8 +375,12 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                 }
             }
             _ => {
-                bail!("invalid card sequence detected `{}` at line number {}", line, number)
-            },
+                bail!(
+                    "invalid card sequence detected `{}` at line number {}",
+                    line,
+                    number
+                )
+            }
         }
     }
 
