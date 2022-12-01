@@ -34,8 +34,8 @@ pub enum Clipping {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Card {
-    Cloze { front: String, back: String },
-    Basic { front: String, back: String },
+    Cloze(Cloze),
+    Basic(Basic),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,7 +47,55 @@ struct Output {
     end_date: DateTime<Utc>,
 }
 
-pub fn parse_from_anki(
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Basic {
+    front: String,
+    back: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Cloze {
+    text: String,
+    back_extra: String,
+}
+
+impl Cloze {
+    fn from_sentence_and_list(sentence: &str, value: &str) -> Result<Self, anyhow::Error> {
+        let mut split = value.split(" .. ");
+        // the term in question will be the first split
+        let term = split
+            .next()
+            .context("unable to find first term in cloze")?
+            .trim();
+
+        // attempt to find the term in the previous term, which should be a highlight
+        trace!("replacing `{}` in `{}`", term, sentence);
+        let re_term = Regex::new(&format!("(?i)(?P<term>{term})"))?;
+
+        if !re_term.is_match(sentence) {
+            trace!("no match for {term} in sentence {sentence}");
+        }
+
+        let clozed_content = re_term.replace_all(sentence, "{{c1::$term}}").to_string();
+
+        Ok(Self {
+            // TODO we add two newlines to cloze content because
+            // we also want to be able to manually add word definitions to
+            // the front
+            text: format!("\n\n{clozed_content}"),
+            back_extra: if let Some(extra) = split.next() {
+                // TODO we add two newlines to back because the
+                // reading will be on the back.
+                format!("\n\n{}", extra.trim())
+            } else {
+                String::new()
+            },
+        })
+    }
+}
+
+/// Function which takes in input from the raw clippings file and returns clippings
+pub fn parse_from_txt(
     clippings_txt: String,
     date_after: Option<DateTime<Utc>>,
 ) -> Result<Vec<Clipping>, Error> {
@@ -64,6 +112,7 @@ pub fn parse_from_anki(
         // trace!("{}", line_1);
         // first line is always the book and author
         let (book, author) = {
+            println!("{line_1}");
             let captures = re_author_book.captures(line_1).unwrap();
             (captures["book"].to_string(), captures["author"].to_string())
         };
@@ -94,6 +143,8 @@ pub fn parse_from_anki(
         // always two newlines
         iter.next().unwrap();
 
+        // dbg!(iter.clone().map(|l|l.to_string()).collect::<Vec<String>>());
+
         match highlight_or_note.as_str() {
             "Highlight" => {
                 let mut content = Vec::new();
@@ -114,70 +165,46 @@ pub fn parse_from_anki(
             }
             "Note" => {
                 let mut terms = Vec::new();
-                // grab everything until the next `======`
+
+                // grab every term until the next `======`
                 for line in iter.by_ref() {
+                    //    dbg!(line);
                     if line.contains("==========") {
                         break;
                     }
                     // at this point we can either split by ` ... ` or ` .. `.
                     // if it's cloze
-                    if line.contains("...") {
-                        let mut split = line.split("...");
-                        // the term in question will be the first split
-                        let term = split
-                            .next()
-                            .context("unable to find first term in cloze")?
-                            .trim();
-
-                        // attempt to find the term in the previous term, which should be a highlight
-                        let clozed_content = if let Clipping::Highlight { sentence, .. } =
-                            entries.last().context("no previous highlight for cloze")?
-                        {
-                            trace!("replacing `{}` in `{}`", term, sentence);
-                            let re_term = Regex::new(&format!("(?i)(?P<term>{term})"))?;
-                            if re_term.is_match(sentence) {
-                                re_term.replace_all(sentence, "{{c1::$term}}").to_string()
-                            } else {
-                                panic!("no match for {term} in sentence {sentence}")
-                            }
-                        } else {
-                            return Err(Error::msg("Term before cloze entry was not a highlight"));
+                    let note = if line.contains(" .. ") {
+                        let Some(Clipping::Highlight { sentence, ..}) = entries.last() else {
+                            trace!("empty list, nothing for cloze to pull from");
+                            continue;
                         };
-
-                        terms.push(Card::Cloze {
-                            // TODO we add two newlines to cloze content because
-                            // we also want to be able to manually add word definitions to
-                            // the front
-                            front: format!("\n\n{clozed_content}"),
-                            back: if let Some(extra) = split.next() {
-                                // TODO we add two newlines to back because the
-                                // reading will be on the back.
-                                format!("\n\n{}", extra.trim())
-                            } else {
-                                String::new()
-                            },
-                        });
-                    } else if line.contains(" .. ") {
-                        let back: Vec<String> = line.split(" .. ").map(|s| s.to_string()).collect();
+                        Card::Cloze(Cloze::from_sentence_and_list(sentence, line)?)
+                    } else if line.contains(" ... ") {
+                        let back: Vec<String> =
+                            line.split(" ... ").map(|s| s.to_string()).collect();
 
                         match back.len().cmp(&2) {
                             Ordering::Less => return Err(Error::msg(
-                                "no description provided for basic term when using `..` operator",
+                                "no description provided for basic term when using `...` operator",
                             )),
                             Ordering::Equal | Ordering::Greater => {}
                         }
 
-                        terms.push(Card::Basic {
+                        Card::Basic(Basic {
                             front: String::new(),
                             back: back.join("\n"),
-                        });
+                        })
                     } else {
-                        terms.push(Card::Basic {
-                            front: String::new(),
-                            back: line.to_string().to_lowercase(),
-                        });
-                    }
+                        let Some(Clipping::Highlight { sentence, ..}) = entries.last() else {
+                            trace!("empty list, nothing for cloze to pull from");
+                            continue;
+                        };
+                        Card::Cloze(Cloze::from_sentence_and_list(sentence, line)?)
+                    };
+                    terms.push(note);
                 }
+                entries.pop();
                 entries.push(Clipping::Note {
                     book,
                     author,
@@ -199,20 +226,18 @@ pub fn parse_from_anki(
         };
         // next line is always (notesorhighlight | location | date)
     }
+    // dbg!("hello world", &entries);
     // if let Some(date_inclusive_after) = date_inclusive_after {
     //     entries = entries
-    //         .into_iter()
-    //         .filter(|c| match c {
     //             Clipping::Highlight { date, .. } => date >= &date_inclusive_after,
     //             Clipping::Note { date, .. } => date >= &date_inclusive_after,
     //         })
     //         .collect();
     // }
-
     Ok(entries)
 }
 
-pub fn run(config: Config) -> Result<(), Error> {
+pub fn convert_config_to_finished_app(config: Config) -> Result<(), Error> {
     match config {
         Config::Regular {
             clippings_path,
@@ -222,7 +247,7 @@ pub fn run(config: Config) -> Result<(), Error> {
             let clippings_txt = fs::read_to_string(clippings_path)
                 .with_context(|| "unable to read clippings path")?;
 
-            let entries = parse_from_anki(clippings_txt, date_after)?;
+            let entries = parse_from_txt(clippings_txt, date_after)?;
 
             let out = {
                 // experimental markdown export
@@ -235,16 +260,16 @@ pub fn run(config: Config) -> Result<(), Error> {
                         Clipping::Highlight { sentence, .. } => {
                             out_string.push_str(&format!("========\n{sentence}\n========\n"));
                         }
-                        // otherwise, for nojes,
+                        // otherwise, for notes,
                         Clipping::Note { cards, .. } => {
                             for card in cards {
                                 match card {
-                                    Card::Cloze { front, back } => {
+                                    Card::Cloze(Cloze { text, back_extra }) => {
                                         out_string.push_str(&format!(
-                                            "----\n{front}\n|-\n{back}\n----\n"
+                                            "----\n{text}\n|-\n{back_extra}\n----\n"
                                         ));
                                     }
-                                    Card::Basic { front, back } => {
+                                    Card::Basic(Basic { front, back }) => {
                                         out_string.push_str(&format!(
                                             "----\n{front}\n|-\n{back}\n----\n"
                                         ));
@@ -319,7 +344,7 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                         break;
                     }
                 }
-                sentence = buffer.join("\n");
+                sentence = buffer.join("<br>");
             }
             // "----" to signal a card built off that sentence
             "----" => {
@@ -332,26 +357,21 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                         break;
                     }
                 }
-                let total_content = buffer.join("\n");
-                let mut split = total_content.split("|-");
-                let front = split
-                    .next()
-                    .context(format!("The content in the card does not have a `front` side! Card with content `{}`", total_content))?
-                    .to_string()
-                    .trim()
-                    .to_string();
+                // dbg!(&buffer);
 
-                let back = split
-                    .next()
-                    .context(format!("The content in the card does not have a `back` side! Card with content `{}`", total_content))?
-                    .to_string()
-                    .trim()
-                    .to_string();
+                // let total_content: String = buffer.join("<br>");
+                let idx = buffer.iter().position(|&s| s == "|-").context(format!("error finding |- in card lol {:?}", buffer))?;
+
+                let front = buffer[0..idx].to_vec().join("<br>");
+                let back = buffer[idx+1..].to_vec().join("<br>");
 
                 // first check for the presence of any cloze beginnings
-                if total_content.contains("{{c1::") {
+                if front.contains("{{c1::") {
                     // insert it as a cloze, without the sentence
-                    cards.push(Card::Cloze { front, back });
+                    cards.push(Card::Cloze(Cloze {
+                        text: front,
+                        back_extra: back,
+                    }));
                 } else {
                     // separate the first line of back (the word) from the rest of the content
                     let mut lines = back.lines();
@@ -362,15 +382,15 @@ fn validate(output_file_name: String) -> Result<(), Error> {
                     let rest: String = lines.collect::<String>().trim().to_string();
 
                     if rest.is_empty() {
-                        cards.push(Card::Basic {
+                        cards.push(Card::Basic(Basic {
                             front,
                             back: format!("{}<br><br>{}", term, sentence),
-                        });
+                        }));
                     } else {
-                        cards.push(Card::Basic {
+                        cards.push(Card::Basic(Basic {
                             front,
                             back: format!("{}<br><br>{}<br><br>{}", term, sentence, rest),
-                        });
+                        }));
                     }
                 }
             }

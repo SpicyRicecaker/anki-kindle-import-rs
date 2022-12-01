@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use anyhow::Error;
+use anyhow::{Context, Error};
 use chrono::prelude::*;
 use chrono::serde::ts_seconds;
 use clap::{Arg, ArgAction, Command};
@@ -75,9 +75,21 @@ impl Config {
             let clippings_path = if let Some(p) = matches.get_one::<String>("clipping-path") {
                 PathBuf::from(p)
             } else {
-                let mut t = dirs::home_dir().unwrap();
-                t.push(r"Calibre Library/Kindle/My Clippings (13)/My Clippings - Kindle.txt");
-                t
+                // hardcoded scan for kindle directory
+                // this might be broken...I think `fetch annotations` from
+                // calibre refreshes this file or something, it may not be
+                // updated right away
+                let opt_1 = match std::env::consts::OS {
+                    "macos" => PathBuf::from("/Volumes/Kindle/documents/My Clippings.txt"),
+                    _ => {
+                        panic!("not implemented")
+                    }
+                };
+                let mut opt_2 = dirs::home_dir().unwrap();
+                opt_2.push("/Calibre Library/Kindle/My Clippings (13)/My Clippings - Kindle.txt");
+
+
+                [opt_1, opt_2].into_iter().find(|p| p.exists()).unwrap()
             };
 
             Ok(Config::Regular {
@@ -91,7 +103,8 @@ impl Config {
 
 fn date_from_str(date_str: &str) -> Result<DateTime<Utc>, Error> {
     let naive_time = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
-    let naive_date = NaiveDate::parse_from_str(date_str, "%m-%d-%Y")?;
+    let naive_date = NaiveDate::parse_from_str(date_str, "%m-%d-%Y")
+        .with_context(|| "error parsing the start date. Valid format is month-day-year")?;
     let naive_date_time = NaiveDateTime::new(naive_date, naive_time);
     info!("using clippings past start date: {}", naive_date_time);
     Ok(Local.from_local_datetime(&naive_date_time).unwrap().into())

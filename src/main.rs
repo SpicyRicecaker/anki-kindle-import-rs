@@ -76,10 +76,11 @@
 //! I remember when I was six years old on a hill in yellowstone and almost rolled face-first into a pile of bison dung
 //! ```
 //!
-//! You can add multiple ` .. `s to create newlines
+//! You can add multiple ` .. `s to create newlines in your comments, and in every newline you can add a term.
 //!
 //! ## To create a cloze card
-//! - ` ...` can be added after term to designate the word that should be clozed. After which, any content after the ` ... ` functions as "extra" content. Please note that there can only be one cloze term per sentence/higlight as of now.
+//! - ` ...` can be added after term to designate the word that should be clozed. After which, any content after the ` ... ` functions as "extra" content. 
+//! ???Please note that there can only be one cloze term per sentence/higlight as of now.
 //!
 //! For example, the following note and higlight pair
 //!
@@ -98,8 +99,11 @@
 //! =====
 //! I remember when I first began walking: my mama balked her eyes out (no I didn't remember)
 //! ```
+//! 
+//! Similarly with basic cards, (TODO WIP: by adding additional ...s you can chain comment lines together)
+//! And by creating multiple lines, you can add multiple terms
 
-use anki_kindle_import::{config::Config, run};
+use anki_kindle_import::{config::Config, convert_config_to_finished_app};
 use env_logger::Env;
 use log::info;
 
@@ -111,7 +115,7 @@ fn main() -> Result<(), Error> {
     info!("Program started");
 
     // generate config
-    run(Config::new()?)?;
+    convert_config_to_finished_app(Config::new()?)?;
 
     Ok(())
 }
